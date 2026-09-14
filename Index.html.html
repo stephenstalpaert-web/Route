@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>90t Route — vergunningswegen planner</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --asfalt:#1c1e22;
+  --asfalt-2:#26292f;
+  --lijn:#3a3e46;
+  --geel:#f5c400;      /* netwerkroute */
+  --oranje:#ff7a00;    /* actie / uitzonderlijk vervoer */
+  --blauw:#4da3ff;     /* aanloopstukken */
+  --groen:#3dbe6c;
+  --rood:#ff5a4e;
+  --tekst:#f2f0eb;
+  --tekst-dim:#a9adb6;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  font-family:'Barlow',system-ui,sans-serif;
+  background:var(--asfalt);
+  color:var(--tekst);
+  display:flex;flex-direction:column;
+  overscroll-behavior:none;
+}
+/* Kop met uitzonderlijk-vervoer strepen */
+header{
+  background:var(--asfalt-2);
+  border-bottom:1px solid var(--lijn);
+  padding:10px 14px 8px;
+  position:relative;
+}
+header::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:5px;
+  background:repeating-linear-gradient(135deg,var(--oranje) 0 14px,#b34f00 14px 28px);
+}
+header h1{
+  font-family:'Barlow Condensed',sans-serif;
+  font-weight:700;font-size:22px;letter-spacing:.06em;text-transform:uppercase;
+  display:flex;align-items:center;gap:10px;
+}
+header h1 .badge{
+  background:var(--geel);color:#1a1a1a;font-size:13px;letter-spacing:.05em;
+  padding:2px 8px;border-radius:4px;font-weight:700;
+}
+header p{font-size:12.5px;color:var(--tekst-dim);margin-top:2px}
+
+/* Invoerpaneel */
+#paneel{background:var(--asfalt-2);border-bottom:1px solid var(--lijn);padding:10px 12px 12px}
+.rij{display:flex;gap:8px;margin-bottom:8px;align-items:center}
+.rij:last-child{margin-bottom:0}
+.veld{
+  flex:1;display:flex;align-items:center;gap:8px;
+  background:var(--asfalt);border:1px solid var(--lijn);border-radius:10px;padding:0 10px;
+}
+.veld span{font-family:'Barlow Condensed';font-weight:700;font-size:15px;color:var(--tekst-dim);width:14px;text-align:center}
+.veld input{
+  flex:1;background:none;border:none;outline:none;color:var(--tekst);
+  font-family:'Barlow';font-size:16px;padding:12px 0;min-width:0;
+}
+.veld input::placeholder{color:#6b6f78}
+button{
+  font-family:'Barlow Condensed',sans-serif;font-weight:700;letter-spacing:.05em;
+  border:none;border-radius:10px;cursor:pointer;color:var(--tekst);
+  background:var(--asfalt);border:1px solid var(--lijn);
+  font-size:15px;text-transform:uppercase;
+}
+.iknop{width:44px;height:44px;flex:none;font-size:18px;display:flex;align-items:center;justify-content:center}
+select{
+  background:var(--asfalt);border:1px solid var(--lijn);border-radius:10px;color:var(--tekst);
+  font-family:'Barlow';font-size:14.5px;padding:10px;flex:1;outline:none;
+}
+#bereken{
+  flex:1.4;background:var(--oranje);border:none;color:#1a1200;
+  padding:12px;font-size:17px;
+}
+#bereken:disabled{opacity:.55}
+#status{
+  font-size:13px;color:var(--tekst-dim);margin-top:8px;min-height:17px;
+}
+#status.fout{color:var(--rood)}
+#status.ok{color:var(--groen)}
+
+/* Geocode suggesties */
+#suggesties{
+  position:absolute;left:12px;right:12px;z-index:1200;
+  background:var(--asfalt-2);border:1px solid var(--lijn);border-radius:10px;
+  max-height:220px;overflow-y:auto;display:none;box-shadow:0 8px 24px rgba(0,0,0,.5);
+}
+#suggesties div{padding:11px 12px;font-size:14.5px;border-bottom:1px solid var(--lijn);cursor:pointer}
+#suggesties div:last-child{border-bottom:none}
+#suggesties div:active{background:var(--asfalt)}
+
+/* Kaart */
+#kaartwrap{flex:1;position:relative;min-height:200px}
+#kaart{position:absolute;inset:0;background:#0e0f11}
+.legende{
+  position:absolute;left:10px;bottom:10px;z-index:1000;
+  background:rgba(28,30,34,.92);border:1px solid var(--lijn);border-radius:10px;
+  padding:8px 10px;font-size:12.5px;display:flex;flex-direction:column;gap:5px;
+}
+.legende b{display:inline-block;width:26px;height:0;border-top:4px solid;border-radius:2px;margin-right:7px;vertical-align:middle}
+.legende .l-net b{border-color:var(--geel)}
+.legende .l-aan b{border-color:var(--blauw);border-top-style:dashed}
+.legende .l-nw b{border-color:#7f8694;border-top-width:2px}
+
+/* Resultaat / actiebalk */
+#resultaat{
+  background:var(--asfalt-2);border-top:1px solid var(--lijn);
+  padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:none;
+}
+#stats{display:flex;gap:14px;margin-bottom:9px;flex-wrap:wrap}
+#stats .stat{display:flex;flex-direction:column}
+#stats .stat b{font-family:'Barlow Condensed';font-size:21px;font-weight:700;line-height:1}
+#stats .stat i{font-style:normal;font-size:11.5px;color:var(--tekst-dim);text-transform:uppercase;letter-spacing:.05em}
+#stats .stat.warn b{color:var(--rood)}
+#waarschuwing{
+  display:none;background:rgba(255,90,78,.12);border:1px solid var(--rood);
+  color:#ffb0a8;border-radius:8px;padding:8px 10px;font-size:13px;margin-bottom:9px;
+}
+.actierij{display:flex;gap:8px}
+.actierij button{flex:1;padding:13px 6px;font-size:15.5px}
+#gmaps{background:var(--geel);border:none;color:#1a1a1a}
+#volgen{background:var(--asfalt);border:1px solid var(--groen);color:var(--groen)}
+#volgen.actief{background:var(--groen);color:#08210f}
+
+/* Volgbanner */
+#volgbanner{
+  display:none;position:absolute;top:10px;left:10px;right:10px;z-index:1000;
+  background:rgba(28,30,34,.94);border:1px solid var(--lijn);border-radius:12px;
+  padding:10px 12px;align-items:center;gap:12px;
+}
+#volgbanner .vb-afstand{font-family:'Barlow Condensed';font-size:26px;font-weight:700;color:var(--geel)}
+#volgbanner .vb-label{font-size:11.5px;color:var(--tekst-dim);text-transform:uppercase;letter-spacing:.05em}
+#volgbanner.afroute{border-color:var(--rood)}
+#volgbanner.afroute .vb-afstand{color:var(--rood)}
+footer{
+  background:var(--asfalt);padding:6px 12px calc(6px + env(safe-area-inset-bottom));
+  font-size:11px;color:#7c818b;text-align:center;
+}
+.leaflet-container{font-family:'Barlow'}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Route planner <span class="badge">UITZ. VERVOER</span></h1>
+  <p>Voorrang aan het vergunningsnetwerk van AWV</p>
+</header>
+
+<div id="paneel">
+  <div class="rij">
+    <div class="veld"><span>A</span><input id="van" placeholder="Vertrek (adres of gemeente)" autocomplete="off"></div>
+    <button class="iknop" id="mijnlocatie" title="Huidige locatie als vertrek">◎</button>
+  </div>
+  <div class="rij">
+    <div class="veld"><span>B</span><input id="naar" placeholder="Bestemming" autocomplete="off"></div>
+    <button class="iknop" id="wissel" title="Wissel A en B">⇅</button>
+  </div>
+  <div class="rij">
+    <select id="netwerk">
+      <option value="Uitzonderlijk_vervoer_klasse_90t">Netwerk 90 ton</option>
+      <option value="Uitzonderlijk_vervoer_klasse_kraan">Netwerk kraan</option>
+      <option value="Uitzonderlijk_vervoer_klasse_autosnelwegen">Netwerk autosnelwegen</option>
+    </select>
+    <button id="bereken">Bereken route</button>
+  </div>
+  <div id="status">Geef vertrek en bestemming in.</div>
+  <div id="suggesties"></div>
+</div>
+
+<div id="kaartwrap">
+  <div id="kaart"></div>
+  <div id="volgbanner">
+    <div><div class="vb-afstand" id="vbAfstand">— km</div><div class="vb-label" id="vbLabel">tot bestemming</div></div>
+  </div>
+  <div class="legende">
+    <div class="l-net"><b></b>Vergunningsnetwerk (route)</div>
+    <div class="l-aan"><b></b>Aanloop buiten netwerk</div>
+    <div class="l-nw"><b></b>Netwerk in de buurt</div>
+  </div>
+</div>
+
+<div id="resultaat">
+  <div id="stats"></div>
+  <div id="waarschuwing"></div>
+  <div class="actierij">
+    <button id="gmaps">Open in Google Maps</button>
+    <button id="volgen">Start volgmodus</button>
+  </div>
+</div>
+
+<footer>Kaart is indicatief — volg altijd de uitgeschreven reisweg van je vergunning. Data: Agentschap Wegen en Verkeer.</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+"use strict";
+
+/* ================= Basis ================= */
+const $ = id => document.getElementById(id);
+const status = (msg, cls) => { const s=$("status"); s.textContent=msg; s.className=cls||""; };
+
+const kaart = L.map("kaart", {zoomControl:true}).setView([51.05, 4.05], 10);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap"
+}).addTo(kaart);
+
+let vanPt=null, naarPt=null;           // [lat,lng]
+let netwerkLaag=null, routeLagen=[];  // Leaflet layers
+let routeData=null;                    // {volledig:[latlng...], netDeel, aanloopA, aanloopB, waypoints}
+let markers={A:null,B:null};
+
+function zetMarker(w, pt, label){
+  if(markers[w]) kaart.removeLayer(markers[w]);
+  markers[w]=L.marker(pt,{title:label}).addTo(kaart)
+    .bindTooltip(w,{permanent:true,direction:"top",offset:[-14,-12]});
+}
+
+/* ================= Geometrie ================= */
+const R=6371000;
+function hav(a,b){
+  const dLat=(b[0]-a[0])*Math.PI/180, dLng=(b[1]-a[1])*Math.PI/180;
+  const s=Math.sin(dLat/2)**2 + Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(s));
+}
+function lijnLengte(c){ let t=0; for(let i=1;i<c.length;i++) t+=hav(c[i-1],c[i]); return t; }
+function puntNaarSegment(p,a,b){ // afstand punt→segment (vlakke benadering, ok voor korte segmenten)
+  const kx=Math.cos(p[0]*Math.PI/180)*111320, ky=110540;
+  const ax=(a[1]-p[1])*kx, ay=(a[0]-p[0])*ky, bx=(b[1]-p[1])*kx, by=(b[0]-p[0])*ky;
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+  let t = l2? ((-ax)*dx+(-ay)*dy)/l2 : 0; t=Math.max(0,Math.min(1,t));
+  const cx=ax+t*dx, cy=ay+t*dy;
+  return Math.sqrt(cx*cx+cy*cy);
+}
+
+/* ================= Fetch met CORS-fallback ================= */
+async function haalJson(url){
+  const pogingen=[
+    url,
+    "https://corsproxy.io/?url="+encodeURIComponent(url),
+    "https://api.allorigins.win/raw?url="+encodeURIComponent(url)
+  ];
+  let fout;
+  for(const u of pogingen){
+    try{
+      const r=await fetch(u,{headers:{"Accept":"application/json"}});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return await r.json();
+    }catch(e){ fout=e; }
+  }
+  throw fout;
+}
+
+/* ================= Geocoderen (Nominatim) ================= */
+let actiefVeld=null, zoekTimer=null;
+async function geocode(q){
+  const url="https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=be&accept-language=nl&q="+encodeURIComponent(q);
+  const r=await fetch(url); return r.ok? r.json():[];
+}
+function toonSuggesties(items, veld){
+  const box=$("suggesties");
+  if(!items.length){box.style.display="none";return;}
+  box.innerHTML="";
+  items.forEach(it=>{
+    const d=document.createElement("div");
+    d.textContent=it.display_name;
+    d.onclick=()=>{
+      const pt=[parseFloat(it.lat),parseFloat(it.lon)];
+      if(veld==="van"){vanPt=pt;$("van").value=it.display_name.split(",").slice(0,3).join(",");zetMarker("A",pt);}
+      else{naarPt=pt;$("naar").value=it.display_name.split(",").slice(0,3).join(",");zetMarker("B",pt);}
+      box.style.display="none";
+      if(vanPt&&naarPt) kaart.fitBounds(L.latLngBounds(vanPt,naarPt).pad(.25));
+      status("Klaar om te berekenen.","");
+    };
+    box.appendChild(d);
+  });
+  const rect=(veld==="van"?$("van"):$("naar")).closest(".rij").getBoundingClientRect();
+  box.style.top=(rect.bottom+window.scrollY)+"px";
+  box.style.display="block";
+}
+["van","naar"].forEach(id=>{
+  $(id).addEventListener("input",e=>{
+    if(id==="van") vanPt=null; else naarPt=null;
+    clearTimeout(zoekTimer);
+    const q=e.target.value.trim();
+    if(q.length<3){$("suggesties").style.display="none";return;}
+    zoekTimer=setTimeout(async()=>{
+      try{ toonSuggesties(await geocode(q), id); }catch(_){}
+    },450);
+  });
+});
+document.addEventListener("click",e=>{
+  if(!e.target.closest("#suggesties") && !e.target.closest(".veld")) $("suggesties").style.display="none";
+});
+$("mijnlocatie").onclick=()=>{
+  status("Locatie ophalen…");
+  navigator.geolocation.getCurrentPosition(p=>{
+    vanPt=[p.coords.latitude,p.coords.longitude];
+    $("van").value="Huidige locatie";
+    zetMarker("A",vanPt); kaart.setView(vanPt,13);
+    status("Vertrek ingesteld op je huidige locatie.","ok");
+  },()=>status("Locatie niet beschikbaar. Sta locatietoegang toe.","fout"),{enableHighAccuracy:true,timeout:10000});
+};
+$("wissel").onclick=()=>{
+  [vanPt,naarPt]=[naarPt,vanPt];
+  const a=$("van").value; $("van").value=$("naar").value; $("naar").value=a;
+  if(vanPt) zetMarker("A",vanPt); if(naarPt) zetMarker("B",naarPt);
+};
+
+/* ================= WFS: netwerk laden ================= */
+const WFS="https://opendata.apps.mow.vlaanderen.be/opendata-geoserver/awv/wfs";
+async function laadNetwerk(laag, bbox){ // bbox=[minLat,minLng,maxLat,maxLng]
+  const [aLat,aLng,bLat,bLng]=bbox;
+  const varianten=[
+    // WFS 2.0 met CQL bbox in lon/lat
+    `${WFS}?service=WFS&version=2.0.0&request=GetFeature&typeNames=awv:${laag}&outputFormat=application/json&srsName=EPSG:4326&cql_filter=`+
+      encodeURIComponent(`BBOX(geometry,${aLng},${aLat},${bLng},${bLat},'EPSG:4326')`),
+    // WFS 2.0 met bbox-parameter (lat/lon-volgorde)
+    `${WFS}?service=WFS&version=2.0.0&request=GetFeature&typeNames=awv:${laag}&outputFormat=application/json&srsName=EPSG:4326&bbox=${aLat},${aLng},${bLat},${bLng},urn:ogc:def:crs:EPSG::4326`,
+    // WFS 1.1 fallback
+    `${WFS}?service=WFS&version=1.1.0&request=GetFeature&typeName=awv:${laag}&outputFormat=application/json&srsName=EPSG:4326&bbox=${aLat},${aLng},${bLat},${bLng},urn:ogc:def:crs:EPSG::4326`
+  ];
+  let laatste;
+  for(const u of varianten){
+    try{
+      const j=await haalJson(u);
+      if(j && j.features && j.features.length) return j;
+      laatste=new Error("0 segmenten gevonden");
+    }catch(e){ laatste=e; }
+  }
+  throw laatste||new Error("Netwerk laden mislukt");
+}
+
+/* ================= Graaf + Dijkstra ================= */
+function sleutel(p){ return p[0].toFixed(5)+","+p[1].toFixed(5); }
+
+function bouwGraaf(geojson){
+  const knopen=new Map(); // key -> [lat,lng]
+  const adj=new Map();    // key -> [{to,w,geom}]
+  const voegEdge=(a,b,geom,w)=>{
+    const ka=sleutel(a), kb=sleutel(b);
+    if(!knopen.has(ka)) knopen.set(ka,a);
+    if(!knopen.has(kb)) knopen.set(kb,b);
+    if(!adj.has(ka)) adj.set(ka,[]);
+    if(!adj.has(kb)) adj.set(kb,[]);
+    adj.get(ka).push({to:kb,w,geom});
+    adj.get(kb).push({to:ka,w,geom:[...geom].reverse()});
+  };
+  for(const f of geojson.features){
+    const g=f.geometry; if(!g) continue;
+    const lijnen = g.type==="LineString" ? [g.coordinates]
+                 : g.type==="MultiLineString" ? g.coordinates : [];
+    for(const lijn of lijnen){
+      if(lijn.length<2) continue;
+      const c=lijn.map(p=>[p[1],p[0]]); // → [lat,lng]
+      const w=lijnLengte(c);
+      if(w<0.5) continue;
+      voegEdge(c[0],c[c.length-1],c,w);
+    }
+  }
+  return {knopen,adj};
+}
+
+function dichtsteKnopen(graaf,pt,k){
+  const arr=[];
+  for(const [key,c] of graaf.knopen) arr.push([hav(pt,c),key]);
+  arr.sort((a,b)=>a[0]-b[0]);
+  return arr.slice(0,k);
+}
+
+function dijkstra(graaf, startKandidaten, eindKandidaten, straf){
+  // eenvoudige binaire heap
+  const heap=[]; const push=(d,k)=>{heap.push([d,k]);let i=heap.length-1;
+    while(i>0){const p=(i-1)>>1;if(heap[p][0]<=heap[i][0])break;[heap[p],heap[i]]=[heap[i],heap[p]];i=p;}};
+  const pop=()=>{const t=heap[0],l=heap.pop();if(heap.length){heap[0]=l;let i=0;
+    for(;;){const a=2*i+1,b=2*i+2;let m=i;
+      if(a<heap.length&&heap[a][0]<heap[m][0])m=a;
+      if(b<heap.length&&heap[b][0]<heap[m][0])m=b;
+      if(m===i)break;[heap[m],heap[i]]=[heap[i],heap[m]];i=m;}}return t;};
+
+  const dist=new Map(), vorige=new Map(); // vorige: key -> {van,edge}
+  for(const [d,k] of startKandidaten){ 
+    const kost=d*straf;
+    if(!dist.has(k)||kost<dist.get(k)){dist.set(k,kost);vorige.set(k,{van:null,edge:null,toegang:d});push(kost,k);}
+  }
+  const klaar=new Set();
+  while(heap.length){
+    const [d,k]=pop();
+    if(klaar.has(k)) continue; klaar.add(k);
+    const buren=graaf.adj.get(k)||[];
+    for(const e of buren){
+      const nd=d+e.w;
+      if(!dist.has(e.to)||nd<dist.get(e.to)){
+        dist.set(e.to,nd); vorige.set(e.to,{van:k,edge:e}); push(nd,e.to);
+      }
+    }
+  }
+  // beste eindknoop kiezen
+  let beste=null, besteTotaal=Infinity, besteToegang=0;
+  for(const [d,k] of eindKandidaten){
+    if(!dist.has(k)) continue;
+    const tot=dist.get(k)+d*straf;
+    if(tot<besteTotaal){besteTotaal=tot;beste=k;besteToegang=d;}
+  }
+  if(beste===null) return null;
+  // pad reconstrueren
+  const geom=[]; let cur=beste, startKnoop=null;
+  while(cur){
+    const v=vorige.get(cur);
+    if(v.edge){ geom.unshift(...v.edge.geom.slice(v.van?0:0)); cur=v.van; }
+    else { startKnoop=cur; cur=null; }
+  }
+  // dubbele punten op naden verwijderen
+  const netPad=[]; for(const p of geom){const l=netPad[netPad.length-1];
+    if(!l||l[0]!==p[0]||l[1]!==p[1]) netPad.push(p);}
+  return {netPad, startKnoop, eindKnoop:beste, eindToegang:besteToegang};
+}
+
+/* ================= OSRM aanloopstukken ================= */
+async function osrmLeg(a,b){
+  try{
+    const u=`https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`;
+    const j=await haalJson(u);
+    if(j.routes && j.routes[0]){
+      return { coords:j.routes[0].geometry.coordinates.map(p=>[p[1],p[0]]),
+               afstand:j.routes[0].distance };
+    }
+  }catch(_){}
+  return { coords:[a,b], afstand:hav(a,b) }; // rechte lijn als noodoplossing
+}
+
+/* ================= Route berekenen ================= */
+let netwerkCache={laag:null,bboxKey:null,graaf:null,geojson:null};
+
+$("bereken").onclick=async()=>{
+  if(!vanPt||!naarPt){status("Kies eerst vertrek én bestemming uit de suggesties.","fout");return;}
+  const laag=$("netwerk").value;
+  $("bereken").disabled=true;
+  routeLagen.forEach(l=>kaart.removeLayer(l)); routeLagen=[];
+  $("resultaat").style.display="none"; stopVolgen();
+
+  try{
+    // 1. Netwerk binnen ruime bbox laden
+    const minLat=Math.min(vanPt[0],naarPt[0]), maxLat=Math.max(vanPt[0],naarPt[0]);
+    const minLng=Math.min(vanPt[1],naarPt[1]), maxLng=Math.max(vanPt[1],naarPt[1]);
+    const bufLat=Math.max(0.18,(maxLat-minLat)*0.35);
+    const bufLng=Math.max(0.28,(maxLng-minLng)*0.35);
+    const bbox=[minLat-bufLat,minLng-bufLng,maxLat+bufLat,maxLng+bufLng];
+    const bboxKey=bbox.map(v=>v.toFixed(2)).join("|")+laag;
+
+    let graaf, geojson;
+    if(netwerkCache.bboxKey===bboxKey){ graaf=netwerkCache.graaf; geojson=netwerkCache.geojson; }
+    else{
+      status("Vergunningsnetwerk laden bij AWV…");
+      geojson=await laadNetwerk(laag,bbox);
+      status(`Netwerk geladen: ${geojson.features.length} wegsegmenten. Graaf opbouwen…`);
+      graaf=bouwGraaf(geojson);
+      netwerkCache={laag,bboxKey,graaf,geojson};
+    }
+
+    // Netwerk in het grijs tonen
+    if(netwerkLaag) kaart.removeLayer(netwerkLaag);
+    netwerkLaag=L.geoJSON(geojson,{style:{color:"#7f8694",weight:2,opacity:.55}}).addTo(kaart);
+
+    // 2. Route over het netwerk (Dijkstra), toegang met straffactor 2
+    status("Beste route over het netwerk zoeken…");
+    const startK=dichtsteKnopen(graaf,vanPt,6);
+    const eindK=dichtsteKnopen(graaf,naarPt,6);
+    if(!startK.length) throw new Error("Geen netwerk gevonden in deze zone.");
+    const res=dijkstra(graaf,startK,eindK,2.0);
+    if(!res) throw new Error("Geen verbinding over het netwerk gevonden tussen deze punten.");
+
+    const inPunt=graaf.knopen.get(res.startKnoop);
+    const uitPunt=graaf.knopen.get(res.eindKnoop);
+
+    // 3. Aanloopstukken via gewone wegen (OSRM)
+    status("Aanloopstukken berekenen…");
+    const [legA,legB]=await Promise.all([osrmLeg(vanPt,inPunt), osrmLeg(uitPunt,naarPt)]);
+
+    // 4. Tekenen
+    const netLijn=L.polyline(res.netPad,{color:"#f5c400",weight:6,opacity:.95}).addTo(kaart);
+    const aanA=L.polyline(legA.coords,{color:"#4da3ff",weight:5,dashArray:"8 8",opacity:.9}).addTo(kaart);
+    const aanB=L.polyline(legB.coords,{color:"#4da3ff",weight:5,dashArray:"8 8",opacity:.9}).addTo(kaart);
+    routeLagen.push(netLijn,aanA,aanB);
+    kaart.fitBounds(netLijn.getBounds().extend(vanPt).extend(naarPt).pad(.08));
+
+    const netKm=lijnLengte(res.netPad)/1000;
+    const aKm=legA.afstand/1000, bKm=legB.afstand/1000;
+    routeData={
+      volledig:[...legA.coords,...res.netPad,...legB.coords],
+      netPad:res.netPad, inPunt, uitPunt
+    };
+
+    // 5. Resultaat + 10 km-controle
+    const stats=$("stats"); stats.innerHTML="";
+    const s=(v,l,warn)=>`<div class="stat${warn?" warn":""}"><b>${v}</b><i>${l}</i></div>`;
+    stats.innerHTML =
+      s((netKm+aKm+bKm).toFixed(1)+" km","totaal") +
+      s(netKm.toFixed(1)+" km","op netwerk") +
+      s(aKm.toFixed(1)+" km","aanloop A",aKm>10) +
+      s(bKm.toFixed(1)+" km","aanloop B",bKm>10);
+    const w=$("waarschuwing");
+    if(aKm>10||bKm>10){
+      w.style.display="block";
+      w.textContent="Let op: een aanloopstuk buiten het netwerk is langer dan 10 km. Controleer of dit binnen je vergunning past.";
+    } else w.style.display="none";
+    $("resultaat").style.display="block";
+    status("Route klaar. Geel = vergunningsnetwerk, blauw = aanloop.","ok");
+  }catch(e){
+    console.error(e);
+    status("Mislukt: "+(e.message||e)+" — probeer opnieuw of kies een ander netwerk.","fout");
+  }finally{
+    $("bereken").disabled=false;
+  }
+};
+
+/* ================= Google Maps export ================= */
+$("gmaps").onclick=()=>{
+  if(!routeData) return;
+  // tussenstops gelijkmatig over het netwerkdeel (max 8) zodat Google op het netwerk blijft
+  const pad=routeData.netPad;
+  const cum=[0]; for(let i=1;i<pad.length;i++) cum.push(cum[i-1]+hav(pad[i-1],pad[i]));
+  const tot=cum[cum.length-1], n=Math.min(8,Math.max(2,Math.round(tot/12000)+2));
+  const wps=[];
+  for(let i=1;i<=n;i++){
+    const doel=tot*i/(n+1);
+    let j=cum.findIndex(c=>c>=doel); if(j<0) j=pad.length-1;
+    wps.push(pad[j][0].toFixed(6)+","+pad[j][1].toFixed(6));
+  }
+  const url="https://www.google.com/maps/dir/?api=1"
+    +"&origin="+vanPt[0].toFixed(6)+","+vanPt[1].toFixed(6)
+    +"&destination="+naarPt[0].toFixed(6)+","+naarPt[1].toFixed(6)
+    +"&travelmode=driving&waypoints="+encodeURIComponent(wps.join("|"));
+  window.open(url,"_blank");
+};
+
+/* ================= Volgmodus ================= */
+let volgId=null, volgMarker=null;
+function stopVolgen(){
+  if(volgId!==null){navigator.geolocation.clearWatch(volgId);volgId=null;}
+  if(volgMarker){kaart.removeLayer(volgMarker);volgMarker=null;}
+  $("volgbanner").style.display="none";
+  $("volgen").classList.remove("actief");
+  $("volgen").textContent="Start volgmodus";
+}
+$("volgen").onclick=()=>{
+  if(volgId!==null){stopVolgen();return;}
+  if(!routeData){status("Bereken eerst een route.","fout");return;}
+  $("volgen").classList.add("actief");
+  $("volgen").textContent="Stop volgmodus";
+  $("volgbanner").style.display="flex";
+  const pad=routeData.volledig;
+  const cum=[0]; for(let i=1;i<pad.length;i++) cum.push(cum[i-1]+hav(pad[i-1],pad[i]));
+  const tot=cum[cum.length-1];
+  volgId=navigator.geolocation.watchPosition(p=>{
+    const pt=[p.coords.latitude,p.coords.longitude];
+    if(!volgMarker){
+      volgMarker=L.circleMarker(pt,{radius:9,color:"#fff",weight:2,fillColor:"#4da3ff",fillOpacity:1}).addTo(kaart);
+    } else volgMarker.setLatLng(pt);
+    kaart.setView(pt, Math.max(kaart.getZoom(),14));
+    // dichtstbijzijnd punt op route + resterende afstand + af-route check
+    let besteD=Infinity, besteI=0;
+    for(let i=1;i<pad.length;i++){
+      const d=puntNaarSegment(pt,pad[i-1],pad[i]);
+      if(d<besteD){besteD=d;besteI=i;}
+    }
+    const rest=(tot-cum[besteI])/1000;
+    const banner=$("volgbanner");
+    if(besteD>250){
+      banner.classList.add("afroute");
+      $("vbAfstand").textContent=Math.round(besteD)+" m";
+      $("vbLabel").textContent="van de route af — keer terug";
+    } else {
+      banner.classList.remove("afroute");
+      $("vbAfstand").textContent=rest.toFixed(1)+" km";
+      $("vbLabel").textContent="tot bestemming";
+    }
+  },e=>{
+    status("Volgmodus: locatie niet beschikbaar.","fout"); stopVolgen();
+  },{enableHighAccuracy:true,maximumAge:2000,timeout:15000});
+};
+</script>
+</body>
+</html>
